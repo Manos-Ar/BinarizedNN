@@ -2,3 +2,5 @@ __pycache__
 results
 BinaryNet.pytorch.code-workspace
 *.yml
+data
+saved_models

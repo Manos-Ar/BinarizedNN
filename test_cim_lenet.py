@@ -13,7 +13,7 @@ from torch.autograd import Variable
 import numpy as np
 import os
 from collections import defaultdict
-
+import time
 test_batch_size=10
 cuda = False
 # cuda = True
@@ -78,7 +78,8 @@ if __name__ == "__main__":
     print(original_prediction)
 
     modes = ["cs", "gs"]
-    checkboards = [True, False]
+    checkboards = [True]
+    # checkboards = [True, False]
     workers = 8
     predictions = defaultdict(lambda: defaultdict())
     differences = defaultdict(lambda: defaultdict())
@@ -87,7 +88,12 @@ if __name__ == "__main__":
             print(f" mode: {mode}, checkboard: {checkboard}")
             model_cim = Lenet5_CIM(Num_rows=32, Num_Columns=32, mode=mode, checkboard=checkboard, workers=workers)
             model_cim.set_weights(model)
+            start_time = time.time()
             output_cim = model_cim(images)
+            end_time = time.time()
+            print(f"Time taken for inference: {end_time - start_time} seconds")
+            # print(output_cim)
+            # print(output_cim-output)
             prediction = torch.argmax(output_cim, dim=1)
             predictions[mode][checkboard] = prediction
             diff = output_cim - output

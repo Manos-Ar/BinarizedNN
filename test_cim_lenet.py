@@ -1,117 +1,114 @@
-from models.binarized_modules import binarized
-import torch.nn as nn
-import torch
-from torchvision import datasets, transforms
 import os
-import numpy as np
+import torch
+from torch.utils.data import Subset, DataLoader
+from torchvision import datasets, transforms
+
+from collections import defaultdict
+import time
+import random
+import argparse
+from tqdm import tqdm
+
 from models.lenet_5 import BinarizedLeNet5_BN as Lenet5
 from models.lenet_5 import BinarizedLeNet5_BN_CIM as Lenet5_CIM
 
-
-from torchvision import datasets, transforms
-from torch.autograd import Variable
-import numpy as np
-import os
-from collections import defaultdict
-import time
-test_batch_size=10
-cuda = False
-# cuda = True
-kwargs = {'num_workers': 1, 'pin_memory': True} if cuda else {}
-
-test_loader = torch.utils.data.DataLoader(
-    datasets.MNIST('data', train=False, transform=transforms.Compose([
-                       transforms.ToTensor(),
-                       transforms.Normalize((0.1307,), (0.3081,))
-                   ])),
-    batch_size=test_batch_size, shuffle=True, **kwargs)
-lr=0.001
-criterion = nn.CrossEntropyLoss()
-
-def test(model):
+def test(model, data_loader):
     model.eval()
-    test_loss = 0
-    correct = 0
-    with torch.no_grad():
-        for data, target in test_loader:
-            if cuda:
-                data, target = data.cuda(), target.cuda()
-            data, target = Variable(data), Variable(target)
-            output = model(data)
-            test_loss += criterion(output, target).item() # sum up batch loss
-            pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
-            correct += pred.eq(target.data.view_as(pred)).cpu().sum()
-            break
+    results = []
 
-    test_loss /= len(test_loader.dataset)
-    print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
-        test_loss, correct, len(test_loader.dataset),
-        100. * correct / len(test_loader.dataset)))
-    acc = 100. * correct / len(test_loader.dataset)
-    return acc
+    with torch.no_grad():
+        for data, target in tqdm(data_loader):
+            # if cuda:
+            #     data, target = data.cuda(), target.cuda()
+
+            output = model(data).detach()
+            results.append(output.cpu())
+
+    results = torch.stack(results)
+    return results
+
 
 if __name__ == "__main__":
 
-    # model_path = os.path.join(models_path,f"epoch_7.pth")
-    model_idx = 1
-    models_path = os.path.abspath(f"/home/earapidis/BinarizedNN/saved_models/lenet_5/model_{model_idx}")
+    parsher = argparse.ArgumentParser()
+    parsher.add_argument("save_path",type=str)
+    args = parsher.parse_args()
+
+    save_path = os.path.abspath(args.save_path)
+
+
+    model_idx = 3
+    models_path = os.path.abspath(f"/shares/bulk/earapidis/dev/BinarizedNN/saved_models/lenet_5/model_{model_idx}")
     model_path = os.path.join(models_path,f"best.pth")
     model = Lenet5()
-    cuda = False
+
+    test_batch_size = 10
+    num_batches = 100
+    num_samples = num_batches * test_batch_size
+
+    test_dataset = datasets.MNIST(
+        'data', train=False,
+        transform=transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,))
+        ])
+    )
+
+    random_indices = random.sample(range(len(test_dataset)), num_samples)
+    subset = Subset(test_dataset, random_indices)
+    subset_loader = DataLoader(subset, batch_size=test_batch_size, shuffle=False)
+
+    os.makedirs(save_path,exist_ok=True)
+    indices_path = os.path.join(save_path,"random_indices.pt")
+    torch.save(torch.tensor(random_indices), indices_path)
+
 
     model.load_state_dict(torch.load(model_path))
-    if cuda:
-        torch.cuda.set_device(0)
-        model.cuda()
-    # print(model)
+    original_output = test(model,subset_loader)
+    original_prediction = torch.argmax(original_output, dim=2)
+    
+    original_prediction_path = os.path.join(save_path,"original_prediction.pt")
+    original_last_layer_path = os.path.join(save_path,"original_last_layer.pt")
+    
+    torch.save(original_output,original_last_layer_path)
+    torch.save(original_prediction,original_prediction_path)
+    # print(original_prediction)
 
-
-    images, labels = next(iter(test_loader))
-    model.eval()
-    if cuda:
-        images, labels = images.cuda(), labels.cuda()
-    images, labels = Variable(images), Variable(labels)
-
-    output = model(images)
-    print(output)
-    original_prediction = torch.argmax(output, dim=1)
-    print(original_prediction)
 
     modes = ["cs", "gs"]
-    checkboards = [True]
-    # checkboards = [True, False]
-    workers = 8
+
+    workers = 20
     predictions = defaultdict(lambda: defaultdict())
-    differences = defaultdict(lambda: defaultdict())
+
+
     for mode in modes:
-        for checkboard in checkboards:
-            print(f" mode: {mode}, checkboard: {checkboard}")
-            model_cim = Lenet5_CIM(Num_rows=32, Num_Columns=32, mode=mode, checkboard=checkboard, workers=workers)
-            model_cim.set_weights(model)
-            start_time = time.time()
-            output_cim = model_cim(images)
-            end_time = time.time()
-            print(f"Time taken for inference: {end_time - start_time} seconds")
-            # print(output_cim)
-            # print(output_cim-output)
-            prediction = torch.argmax(output_cim, dim=1)
-            predictions[mode][checkboard] = prediction
-            diff = output_cim - output
-            avg = torch.mean(torch.abs(diff))
-            differences[mode][checkboard] = avg
-            print(avg)
+        print(f" mode: {mode}")
+        model_cim = Lenet5_CIM(Num_rows=32, Num_Columns=32, mode=mode,workers=workers,transient=False)
+        model_cim.set_weights(model)
+        start_time = time.time()
+        output_cim = test(model_cim,subset_loader)
+        end_time = time.time()
+
+        last_layer_path = os.path.join(save_path,f"{mode}_last_layer.pt")
+        torch.save(output_cim, last_layer_path)
+        prediction = torch.argmax(output_cim, dim=2)
+        prediction_path = os.path.join(save_path,f"{mode}_prediction.pt")
+        torch.save(prediction,prediction_path)
+
+        predictions[mode] = prediction
+        # diff = output_cim - output
+        # avg = torch.mean(torch.abs(diff))
+        # print(avg)
+        print(f"Time taken for inference: {end_time - start_time} seconds")
         
     print("Predictions:")
-    original_prediction = original_prediction.cpu().numpy()
-    for mode, checkboard_dict in predictions.items():
-        for checkboard, prediction in checkboard_dict.items():
-            print(f"Mode: {mode}, Checkboard: {checkboard}")
-            prediction = prediction.cpu().numpy()
-            print(f"Predictions:   {prediction}")
-            print(f"Original:      {original_prediction}")
+    for mode, prediction in predictions.items():
+            print(f"\tMode: {mode}")
+            # print(f"Predictions:   {prediction}")
+            # print(f"Original:      {original_prediction}")
             num_correct = (prediction == original_prediction ).sum().item()
-            acc = num_correct / len(original_prediction) * 100.0
-            print(f"Accuracy: {acc:.2f}%")
+            # print(num_correct)
+            total = torch.numel(original_prediction)
+            acc = (num_correct /total)  * 100.0
+            print(f"\tAccuracy: {acc:.2f}%")
             print()
-    # test(model)
-    # test(model_cim)

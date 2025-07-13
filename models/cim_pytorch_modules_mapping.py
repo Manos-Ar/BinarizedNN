@@ -66,11 +66,9 @@ class BinarizeLinearInference(nn.Linear):
         weight_b = weight_b.T
         out = fc(input_b,weight_b,self.Num_rows,self.Num_Columns,self.mode,self.workers,self.transient)
         # out = nn.functional.linear(input_b,weight_b)6
-        # if not self.bias is None:
-        self.bias.org=self.bias.data.clone()
-        print(self.bias.shape)
-        print(out.shape)
-        out += self.bias.view(1, -1).expand_as(out)
+        if not self.bias is None:
+            self.bias.org=self.bias.data.clone()
+            out += self.bias.view(1, -1).expand_as(out)
         # print(out)
 
         return out

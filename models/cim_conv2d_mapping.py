@@ -7,16 +7,20 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import math
 import time
 
-def checkerboard_last_cols(arr: torch.Tensor, C: int) -> None:
+def checkerboard_last_cols(arr: torch.Tensor, C: int) -> torch.Tensor:
     n, m = arr.shape
+    if C == 0:
+        return arr.clone()  # return a copy even if unchanged
     if C > m:
         raise ValueError("C cannot be larger than the number of columns m.")
     
+    arr_copy = arr.clone()
     rows = torch.arange(n).view(-1, 1)                
     cols = torch.arange(m - C, m).view(1, -1)         
 
     pattern = (rows + cols) % 2
-    arr[:, -C:] = pattern
+    arr_copy[:, -C:] = pattern
+    return arr_copy
 
 def compliment(x):
     x = x.clone()
@@ -67,7 +71,7 @@ def map_conv2d(x,w,padding=0):
 
 
 def run_tile(ii,jj,cx, tmp_x_np, tmp_w_np, Num_rows, Num_Columns, columns_per_crossbar, Total_dim, mode,transient):
-    checkerboard_last_cols(tmp_w_np, tmp_w_np.shape[1] - columns_per_crossbar)
+    tmp_w_np = checkerboard_last_cols(tmp_w_np, tmp_w_np.shape[1] - columns_per_crossbar)
     _, _out_np = _task(((ii,jj), tmp_x_np), tmp_w_np, Num_rows, Num_Columns, mode, transient)
 
     column_start_idx = cx * columns_per_crossbar
@@ -98,7 +102,7 @@ def cim_conv_2d(crossbar_inputs, crossbar_weights, _COUT_, mode, Total_dim, tran
                         tasks.append((ii,jj, cx, tmp_x, tmp_w, Num_rows, Num_Columns, columns_per_crossbar, Total_dim, mode, transient))
 
         futures = [executor.submit(run_tile, *t) for t in tasks]
-        for f in tqdm(as_completed(futures),total=len(tasks)):
+        for f in tqdm(as_completed(futures),total=len(tasks),disable=True):
             (ii,jj, col_start, col_end), out_np = f.result()
             out = torch.from_numpy(out_np)
             output_conv_2d[:, col_start:col_end, ii, jj] += out

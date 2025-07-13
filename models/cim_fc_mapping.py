@@ -50,12 +50,12 @@ def  fc_linear(crossbar_inputs,crossbar_weights,N,mode,max_workers,transient):
                 column_end_idx = (jj+1)*columns_per_crossbar
                 tmp_x = crossbar_inputs[:,ii]
                 tmp_w = crossbar_weights[ii][jj]
-                checkerboard_last_cols(tmp_w,Num_Columns-columns_per_crossbar)
+                tmp_w = checkerboard_last_cols(tmp_w,Num_Columns-columns_per_crossbar)
                 # out_matmul = torch.matmul(tmp_x,tmp_w)
                 args = (((ii,jj),tmp_x),tmp_w,Num_rows,Num_Columns,mode,transient)
                 tasks.append(args)
         futures = [executor.submit(_task, *t) for t in tasks]
-        for f in tqdm(as_completed(futures),total=len(tasks)):
+        for f in tqdm(as_completed(futures),total=len(tasks),disable=True):
             (ii,jj), out_matmul = f.result()
             column_start_idx = jj*columns_per_crossbar
             column_end_idx = (jj+1)*columns_per_crossbar

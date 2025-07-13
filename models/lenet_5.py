@@ -117,9 +117,6 @@ class BinarizedLeNet5_BN_CIM(nn.Module):
         x = self.pool1(self.htanh1(self.bn1(self.conv1(x))))
         x = self.pool2(self.htanh2(self.bn2(self.conv2(x))))
         x = x.view(x.size(0), -1)
-        print("ok")
-        time.sleep(1)
-
         x = self.htanh3(self.bn_fc1(self.fc1(x)))
         x = self.htanh4(self.bn_fc2(self.fc2(x)))
         x = self.bn_fc3(self.fc3(x))  # No Hardtanh at the end

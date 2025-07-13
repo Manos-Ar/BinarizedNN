@@ -115,11 +115,9 @@ def fc_tile(x,w, Num_rows,Num_Columns,mode,max_workers,transient):
 
 def fc(x,w, Num_rows,Num_Columns,mode,max_workers,transient):
     # w = w.T
-    print(w.shape)
     M , N = w.shape
     _N_ , M = x.shape
     output_fc = torch.empty((_N_,N))
-    # time.sleep(2)
     for idx in range(_N_):
         tmp_x = x[idx].unsqueeze(0)
         output_fc[idx,:] = fc_tile(tmp_x,w, Num_rows,Num_Columns,mode,max_workers,transient)

@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
-from .binarized_modules import  BinarizeLinear,BinarizeConv2d
-from .cim_pytorch_modules import BinarizeLinearInference, BinarizeConv2dInference
+from models.binarized_modules import  BinarizeLinear,BinarizeConv2d
+from models.cim_pytorch_modules import BinarizeLinearInference, BinarizeConv2dInference
 
 class BinarizedLeNet5_BN(nn.Module):
     def __init__(self):
@@ -169,3 +169,6 @@ class BinarizedLeNet5_BN_CIM(nn.Module):
         # Ensure the model is in evaluation
         # mode to use the running statistics of batch normalization
         self.eval()
+
+# if __name__ == "__main__":
+#     print()

@@ -23,7 +23,10 @@ class Binarize(InplaceFunction):
         scale= output.abs().max() if allow_scale else 1
 
         if quant_mode=='det':
-            return output.div(scale).sign().mul(scale)
+            signed = output.div(scale).sign()
+            signed = signed + (output == 0).float().mul(-1)  # force 0 → -1
+            return signed.mul(scale)
+            # return output.div(scale).sign().mul(scale)
         else:
             return output.div(scale).add_(1).div_(2).add_(torch.rand(output.size()).add(-0.5)).clamp_(0,1).round().mul_(2).add_(-1).mul(scale)
         

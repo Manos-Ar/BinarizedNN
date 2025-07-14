@@ -32,18 +32,21 @@ if __name__ == "__main__":
 
     parsher = argparse.ArgumentParser()
     parsher.add_argument("save_path",type=str)
+    parsher.add_argument('-l',"--load", action='store_true',help="load sim from target save_path")
+
     args = parsher.parse_args()
 
     save_path = os.path.abspath(args.save_path)
+    load_indices = args.load
 
-
-    model_idx = 3
+    model_idx = 2
     models_path = os.path.abspath(f"/shares/bulk/earapidis/dev/BinarizedNN/saved_models/lenet_5/model_{model_idx}")
+    # model_path = os.path.join(models_path,f"epoch_1.pth")
     model_path = os.path.join(models_path,f"best.pth")
     model = Lenet5()
 
     test_batch_size = 10
-    num_batches = 100
+    num_batches = 1
     num_samples = num_batches * test_batch_size
 
     test_dataset = datasets.MNIST(
@@ -56,7 +59,8 @@ if __name__ == "__main__":
     os.makedirs(save_path,exist_ok=True)
     indices_path = os.path.join(save_path,"random_indices.pt")
     
-    if os.path.exists(indices_path):
+    if load_indices and os.path.exists(indices_path):
+
          random_indices = torch.load(indices_path)
          print("loaded random indices")
     else:
@@ -65,16 +69,6 @@ if __name__ == "__main__":
 
     subset = Subset(test_dataset, random_indices)
     subset_loader = DataLoader(subset, batch_size=test_batch_size, shuffle=False)
-
-
-    # random_indices = random.sample(range(len(test_dataset)), num_samples)
-    # subset = Subset(test_dataset, random_indices)
-    # subset_loader = DataLoader(subset, batch_size=test_batch_size, shuffle=False)
-
-    # os.makedirs(save_path,exist_ok=True)
-    # indices_path = os.path.join(save_path,"random_indices.pt")
-    # torch.save(torch.tensor(random_indices), indices_path)
-
 
     model.load_state_dict(torch.load(model_path))
     original_output = test(model,subset_loader)
@@ -88,24 +82,29 @@ if __name__ == "__main__":
     # print(original_prediction)
 
 
+    # modes = ["ideal"]
     modes = ["cs", "gs"]
 
-    workers = 20
+    workers = 16
     predictions = defaultdict(lambda: defaultdict())
 
 
     for mode in modes:
         print(f" mode: {mode}")
         model_cim = Lenet5_CIM(Num_rows=32, Num_Columns=32, mode=mode,workers=workers,transient=False)
-        model_cim.set_weights(model)
+        # model_cim.set_weights(model)
+        model_cim.load_state_dict(model.state_dict())
+        model_cim.eval()
         start_time = time.time()
         output_cim = test(model_cim,subset_loader)
         end_time = time.time()
 
-        last_layer_path = os.path.join(save_path,f"{mode}_last_layer.pt")
+        mode_dir = os.path.join(save_path,mode)
+        os.makedirs(mode_dir,exist_ok=True)
+        last_layer_path = os.path.join(mode_dir,"last_layer.pt")
         torch.save(output_cim, last_layer_path)
         prediction = torch.argmax(output_cim, dim=2)
-        prediction_path = os.path.join(save_path,f"{mode}_prediction.pt")
+        prediction_path = os.path.join(mode_dir,"prediction.pt")
         torch.save(prediction,prediction_path)
 
         predictions[mode] = prediction

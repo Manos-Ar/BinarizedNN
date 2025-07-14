@@ -53,14 +53,27 @@ if __name__ == "__main__":
             transforms.Normalize((0.1307,), (0.3081,))
         ])
     )
+    os.makedirs(save_path,exist_ok=True)
+    indices_path = os.path.join(save_path,"random_indices.pt")
+    
+    if os.path.exists(indices_path):
+         random_indices = torch.load(indices_path)
+         print("loaded random indices")
+    else:
+        random_indices = random.sample(range(len(test_dataset)), num_samples)
+        torch.save(torch.tensor(random_indices), indices_path)
 
-    random_indices = random.sample(range(len(test_dataset)), num_samples)
     subset = Subset(test_dataset, random_indices)
     subset_loader = DataLoader(subset, batch_size=test_batch_size, shuffle=False)
 
-    os.makedirs(save_path,exist_ok=True)
-    indices_path = os.path.join(save_path,"random_indices.pt")
-    torch.save(torch.tensor(random_indices), indices_path)
+
+    # random_indices = random.sample(range(len(test_dataset)), num_samples)
+    # subset = Subset(test_dataset, random_indices)
+    # subset_loader = DataLoader(subset, batch_size=test_batch_size, shuffle=False)
+
+    # os.makedirs(save_path,exist_ok=True)
+    # indices_path = os.path.join(save_path,"random_indices.pt")
+    # torch.save(torch.tensor(random_indices), indices_path)
 
 
     model.load_state_dict(torch.load(model_path))

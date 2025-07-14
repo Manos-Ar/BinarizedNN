@@ -12,16 +12,18 @@ class BinarizedLeNet5_BN(nn.Module):
         self.conv1 = BinarizeConv2d(1, 6, kernel_size=5)
         self.bn1 = nn.BatchNorm2d(6)
         self.htanh1 = nn.Hardtanh()
-        self.pool1 = nn.AvgPool2d(1)
+        # self.pool1 = nn.AvgPool2d(1)
+        self.pool1 = nn.AvgPool2d(2)
 
         self.conv2 = BinarizeConv2d(6, 16, kernel_size=5)
         self.bn2 = nn.BatchNorm2d(16)
         self.htanh2 = nn.Hardtanh()
-        self.pool2 = nn.AvgPool2d(1)
+        # self.pool2 = nn.AvgPool2d(1)
+        self.pool2 = nn.AvgPool2d(2)
 
         # Linear layers + BatchNorm1d
-        self.fc1 = BinarizeLinear(16 * 400, 120)
-        # self.fc1 = BinarizeLinear(16 * 4 * 4, 120)
+        # self.fc1 = BinarizeLinear(16 * 400, 120)
+        self.fc1 = BinarizeLinear(16 * 4 * 4, 120)
         self.bn_fc1 = nn.BatchNorm1d(120)
         self.htanh3 = nn.Hardtanh()
 
@@ -88,18 +90,20 @@ class BinarizedLeNet5_BN_CIM(nn.Module):
         self.conv1 = BinarizeConv2dInference(1,6, kernel_size=5,Num_rows=self.Num_rows,Num_Columns=self.Num_Columns,mode=self.mode,transient=self.transient,workers=self.workers)
         self.bn1 = nn.BatchNorm2d(6)
         self.htanh1 = nn.Hardtanh()
-        self.pool1 = nn.AvgPool2d(1)
+        # self.pool1 = nn.AvgPool2d(1)
+        self.pool1 = nn.AvgPool2d(2)
 
         # self.conv2 = BinarizeConv2d(6, 16, kernel_size=5)
         self.conv2 = BinarizeConv2dInference(6,16, kernel_size=5,Num_rows=self.Num_rows,Num_Columns=self.Num_Columns,mode=self.mode,transient=self.transient,workers=self.workers)
         self.bn2 = nn.BatchNorm2d(16)
         self.htanh2 = nn.Hardtanh()
-        self.pool2 = nn.AvgPool2d(1)
+        # self.pool2 = nn.AvgPool2d(1)
+        self.pool2 = nn.AvgPool2d(2)
 
         # Linear layers + BatchNorm1d
         # self.fc1 = BinarizeLinear(16 * 4 * 4, 120)
-        self.fc1 = BinarizeLinearInference(16 * 400, 120,Num_rows=self.Num_rows,Num_Columns=self.Num_Columns,mode=self.mode,transient=self.transient,workers=self.workers)
-        # self.fc1 = BinarizeLinearInference(16 * 4 * 4, 120,Num_rows=self.Num_rows,Num_Columns=self.Num_Columns,mode=self.mode,transient=self.transient,workers=self.workers)
+        # self.fc1 = BinarizeLinearInference(16 * 400, 120,Num_rows=self.Num_rows,Num_Columns=self.Num_Columns,mode=self.mode,transient=self.transient,workers=self.workers)
+        self.fc1 = BinarizeLinearInference(16 * 4 * 4, 120,Num_rows=self.Num_rows,Num_Columns=self.Num_Columns,mode=self.mode,transient=self.transient,workers=self.workers)
         self.bn_fc1 = nn.BatchNorm1d(120)
         self.htanh3 = nn.Hardtanh()
 

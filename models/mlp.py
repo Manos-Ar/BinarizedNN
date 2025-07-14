@@ -65,7 +65,7 @@ class MLP_CIM(nn.Module):
     
     def forward(self, x):
         x = x.view(-1, 28*28)
-        print(x.shape)
+        # print(x.shape)
         x = self.fc1(x)
         x = self.bn1(x)
         x = self.htanh1(x)

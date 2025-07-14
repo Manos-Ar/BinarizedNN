@@ -102,6 +102,7 @@ def cim_conv_2d(crossbar_inputs, crossbar_weights, _COUT_, mode, Total_dim, tran
                         tasks.append((ii,jj, cx, tmp_x, tmp_w, Num_rows, Num_Columns, columns_per_crossbar, Total_dim, mode, transient))
 
         futures = [executor.submit(run_tile, *t) for t in tasks]
+        # for f in tqdm(as_completed(futures),total=len(tasks)):
         for f in tqdm(as_completed(futures),total=len(tasks),disable=True):
             (ii,jj, col_start, col_end), out_np = f.result()
             out = torch.from_numpy(out_np)

@@ -10,6 +10,8 @@ import argparse
 from tqdm import tqdm
 
 from models.mlp import MLP, MLP_CIM
+from models.lenet_5 import BinarizedLeNet5_BN as Lenet_5
+from models.lenet_5 import BinarizedLeNet5_BN_CIM as Lenet_5_CIM
 
 def test(model, data_loader):
     model.eval()
@@ -31,21 +33,29 @@ if __name__ == "__main__":
 
     parsher = argparse.ArgumentParser()
     parsher.add_argument("save_path",type=str)
+    parsher.add_argument("model",type=str,choices=["mlp","lenet"],default="lenet",help="choose model for MNIST dataset: MLP or Lenet-5")
     parsher.add_argument('-l',"--load", action='store_true',help="load sim from target save_path")
 
     args = parsher.parse_args()
 
     save_path = os.path.abspath(args.save_path)
+    model_type = args.model
     load_indices = args.load
 
-    model_idx = 1
-    models_path = os.path.abspath(f"/shares/bulk/earapidis/dev/BinarizedNN/saved_models/mlp/model_{model_idx}")
-    model_path = os.path.join(models_path,f"best.pth")
-
-    model = MLP()
+    if model_type=="mlp":
+        model_idx = 2
+        models_path = os.path.abspath(f"/shares/bulk/earapidis/dev/BinarizedNN/saved_models/mlp/model_{model_idx}")
+        model_path = os.path.join(models_path,f"best.pth")
+        model = MLP()   
+    elif model_type=="lenet":
+        model_idx = 1
+        models_path = os.path.abspath(f"/shares/bulk/earapidis/dev/BinarizedNN/saved_models/lenet_5/model_{model_idx}")
+        model_path = os.path.join(models_path,f"best.pth")
+        model = Lenet_5()
 
     test_batch_size = 10
-    num_batches = 10
+    num_batches = 1
+    
     num_samples = num_batches * test_batch_size
 
     test_dataset = datasets.MNIST(
@@ -55,8 +65,9 @@ if __name__ == "__main__":
             transforms.Normalize((0.1307,), (0.3081,))
         ])
     )
-    os.makedirs(save_path,exist_ok=True)
     indices_path = os.path.join(save_path,"random_indices.pt")
+    model_type_path = os.path.join(save_path,model_type)
+    os.makedirs(model_type_path,exist_ok=True)
     if load_indices and os.path.exists(indices_path):
          random_indices = torch.load(indices_path)
          print("loaded random indices")
@@ -78,39 +89,49 @@ if __name__ == "__main__":
     
     torch.save(original_output,original_last_layer_path)
     torch.save(original_prediction,original_prediction_path)
-    # print(original_prediction)
 
+    modes = ["ideal"]
+    # mappings = [False]
+    mappings = [True,False]
 
-    # modes = ["ideal"]
-    modes = ["cs", "gs"]
+    # modes = ["cs", "gs"]
+    # modes = ["no-comp"]
+
 
     workers = 20
     predictions = defaultdict(lambda: defaultdict())
 
 
-    for mode in modes:
-        print(f" mode: {mode}")
-        model_cim = MLP_CIM(Num_rows=32, Num_Columns=32, mode=mode,workers=workers,transient=False)
-        model_cim.load_state_dict(model.state_dict())
-        model_cim.eval()
-        start_time = time.time()
-        output_cim = test(model_cim,subset_loader)
-        end_time = time.time()
+    for mapping in reversed(mappings):
+        for mode in modes:
+            print(f" mode: {mode}, mapping : {mapping}")
+            if model_type=="mlp":
+                model_cim = MLP_CIM(Num_rows=32, Num_Columns=32, mode=mode,workers=workers,transient=False,checkboard=mapping,mapping=mapping)
+            elif model_type=="lenet":
+                model_cim = Lenet_5_CIM(Num_rows=32, Num_Columns=32, mode=mode,workers=workers,transient=False,checkboard=mapping,mapping=mapping)
 
-        mode_dir = os.path.join(save_path,mode)
-        os.makedirs(mode_dir,exist_ok=True)
-        last_layer_path = os.path.join(mode_dir,"last_layer.pt")
-        torch.save(output_cim, last_layer_path)
-        prediction = torch.argmax(output_cim, dim=2)
-        prediction_path = os.path.join(mode_dir,"prediction.pt")
-        torch.save(prediction,prediction_path)
 
-        predictions[mode] = prediction
-        # diff = output_cim - output
-        # avg = torch.mean(torch.abs(diff))
-        # print(avg)
-        print(f"Time taken for inference: {end_time - start_time} seconds")
-        
+            model_cim.load_state_dict(model.state_dict())
+            model_cim.eval()
+            start_time = time.time()
+            output_cim = test(model_cim,subset_loader)
+            end_time = time.time()
+
+            mode_dir = os.path.join(model_type_path,f"{mode}_mapping_{mapping}")
+            os.makedirs(mode_dir,exist_ok=True)
+            last_layer_path = os.path.join(mode_dir,"last_layer.pt")
+            torch.save(output_cim, last_layer_path)
+            prediction = torch.argmax(output_cim, dim=2)
+            prediction_path = os.path.join(mode_dir,"prediction.pt")
+            torch.save(prediction,prediction_path)
+
+            predictions[f"{mode}_mapping_{mapping}"] = prediction
+
+            # diff = output_cim - output
+            # avg = torch.mean(torch.abs(diff))
+            # print(avg)
+            print(f"Time taken for inference: {end_time - start_time} seconds")
+            
     print("Predictions:")
     for mode, prediction in predictions.items():
             print(f"\tMode: {mode}")

@@ -11,7 +11,7 @@ class BinarizeConv2dInference(nn.Conv2d):
                  Num_rows, Num_Columns,
                  stride=1, padding=0, dilation=1, groups=1,
                  bias=True,
-                 mode="cs", workers=8,transient=False,checkboard=True,mapping=True):
+                 mode="ideal", workers=8,transient=False,checkboard=True,mapping=True):
         super().__init__(
             in_channels, out_channels, kernel_size,
             stride=stride, padding=padding,
@@ -49,7 +49,7 @@ class BinarizeConv2dInference(nn.Conv2d):
 
 class BinarizeLinearInference(nn.Linear):
 
-    def __init__(self, in_features, out_features,Num_rows,Num_Columns,mode="cs",workers=8, bias=True,transient=False,checkboard=True,mapping=True):
+    def __init__(self, in_features, out_features,Num_rows,Num_Columns,mode="ideal",workers=8, bias=True,transient=False,checkboard=False,mapping=False):
         super().__init__(in_features, out_features, bias=bias)
         self.Num_rows    = Num_rows
         self.Num_Columns = Num_Columns
@@ -68,7 +68,7 @@ class BinarizeLinearInference(nn.Linear):
         input_b = input_b.detach()
         weight_b = weight_b.detach()
         weight_b = weight_b.T
-        out = fc(input_b,weight_b,self.Num_rows,self.Num_Columns,self.mode,self.workers,self.transient,self.checkboard,self.mapping)
+        out = fc(input_b,weight_b,self.Num_rows,self.Num_Columns,mode=self.mode,max_workers=self.workers,transient=self.transient,checkboard=self.checkboard,mapping=self.mapping)
         # out = nn.functional.linear(input_b,weight_b)6
         if not self.bias is None:
             self.bias.org=self.bias.data.clone()

@@ -1,6 +1,6 @@
 import os 
 import torch.nn as nn
-from models.cim_conv import con2d
+from models.cim_conv import conv2d
 from models.cim_fc import fc
 from models.binarized_modules import binarized
 
@@ -38,7 +38,7 @@ class BinarizeConv2dInference(nn.Conv2d):
 
         input_b = input_b.detach()
         weight_b = weight_b.detach()
-        out = con2d(input_b,weight_b,self.Num_rows,self.Num_Columns,self.mode,self.workers,self.transient,self.checkboard,self.mapping)
+        out = conv2d(input_b,weight_b,self.Num_rows,self.Num_Columns,self.mode,self.workers,self.transient,self.checkboard,self.mapping)
         # add bias if present
         if self.bias is not None:
             # store original bias for potential gradient updates, etc.

@@ -77,34 +77,35 @@ def _fc_tile_(x,w, Num_rows,Num_Columns,mode,max_workers,transient,checkboard):
     crossbar_inputs = torch.zeros((_N_,crossbar_y,Num_rows))
     crossbar_weights = torch.zeros((crossbar_y,crossbar_x,Num_rows,Num_Columns))
 
-    rows_per_crossbar = math.floor(M/crossbar_y)
-    columns_per_crossbar = math.floor(N/crossbar_x)
+    rows_per_crossbar = math.ceil(M/crossbar_y)
+    columns_per_crossbar = math.ceil(N/crossbar_x)
 
     # print(rows_per_crossbar, columns_per_crossbar)
 
     for ii in range(crossbar_y):
         row_start_idx = ii*rows_per_crossbar
-        # if ii==crossbar_y-1:
-        #     row_end_idx = M
-        # else:
-        row_end_idx = (ii+1)*rows_per_crossbar
-        crossbar_inputs[:,ii,:rows_per_crossbar] = x[:,row_start_idx:row_end_idx]
+        if ii==crossbar_y-1:
+            row_end_idx = M
+        else:
+            row_end_idx = (ii+1)*rows_per_crossbar
+        # print(ii)
+        crossbar_inputs[:,ii,:row_end_idx-row_start_idx] = x[:,row_start_idx:row_end_idx]
     # for ii in range(0,whole_input_size,step=inpu)
         # print(row_start_idx,row_end_idx)
 
         for jj in range(crossbar_x):
             column_start_idx = jj*columns_per_crossbar
-            # if jj==crossbar_x-1:
-            #     column_end_idx=N
-            # else:
-            column_end_idx = (jj+1)*columns_per_crossbar
+            if jj==crossbar_x-1:
+                column_end_idx=N
+            else:
+                column_end_idx = (jj+1)*columns_per_crossbar
             # print(column_start_idx,column_end_idx)
             
-            crossbar_weights[ii,jj,:rows_per_crossbar,:columns_per_crossbar] = w[row_start_idx:row_end_idx,column_start_idx:column_end_idx]
+            crossbar_weights[ii,jj,:row_end_idx-row_start_idx,:column_end_idx-column_start_idx] = w[row_start_idx:row_end_idx,column_start_idx:column_end_idx]
         
     # print(f"crossbar weigths : {crossbar_weights.shape}")
     # print(f"crossbar inputs : {crossbar_inputs.shape}")
-    return fc_linear(crossbar_inputs,crossbar_weights,N,mode,max_workers,transient,checkboard)
+    return fc_linear(crossbar_inputs,crossbar_weights,N,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)
 
 def fc_tile(x,w, Num_rows,Num_Columns,mode,max_workers,transient,checkboard,mapping):
     # w = w.T
@@ -115,11 +116,17 @@ def fc_tile(x,w, Num_rows,Num_Columns,mode,max_workers,transient,checkboard,mapp
         mapped_x, mapped_w = map_fc(x,w)
         output_fc = _fc_tile_(mapped_x,mapped_w,Num_rows,Num_Columns,mode,max_workers,transient,checkboard)
     else:
+        # pos_x, neg_x = compliment(x)
+        # pos_w, neg_w = compliment(w)
+        # pos_output_fc = _fc_tile_(pos_x,pos_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)
+        # neg_output_fc = _fc_tile_(neg_x,neg_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)
+        # output_fc = pos_output_fc + neg_output_fc
         pos_x, neg_x = compliment(x)
         pos_w, neg_w = compliment(w)
-        pos_output_fc = _fc_tile_(pos_x,pos_w,Num_rows,Num_Columns,mode,max_workers,transient,checkboard)
-        neg_output_fc = _fc_tile_(neg_x,neg_w,Num_rows,Num_Columns,mode,max_workers,transient,checkboard)
+        pos_output_fc = _fc_tile_(pos_x,pos_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)
+        neg_output_fc = _fc_tile_(neg_x,neg_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)
         output_fc = pos_output_fc + neg_output_fc
+
     output_fc = get_fc_output(output_fc,M)
     return output_fc
 
@@ -130,5 +137,5 @@ def fc(x,w, Num_rows,Num_Columns,mode,max_workers,transient,checkboard,mapping):
     output_fc = torch.empty((_N_,N))
     for idx in range(_N_):
         tmp_x = x[idx].unsqueeze(0)
-        output_fc[idx,:] = fc_tile(tmp_x,w, Num_rows,Num_Columns,mode,max_workers,transient,checkboard,mapping)
+        output_fc[idx,:] = fc_tile(tmp_x,w, Num_rows,Num_Columns,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard,mapping=mapping)
     return output_fc

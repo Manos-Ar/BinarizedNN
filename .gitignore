@@ -4,3 +4,5 @@ BinaryNet.pytorch.code-workspace
 *.yml
 data
 saved_models
+results_copy
+validation

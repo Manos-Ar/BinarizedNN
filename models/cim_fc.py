@@ -35,107 +35,114 @@ def map_fc(x,w):
 
     return mapped_x,mapped_w
 
-def  fc_linear(crossbar_inputs,crossbar_weights,N,mode,max_workers,transient,checkboard):
-    crossbar_y,crossbar_x,Num_rows,Num_Columns = crossbar_weights.shape
+def parallel_fc_kernels(crossbar_inputs,crossbar_weights,N,mode,max_workers,transient,checkboard):
+    crossbar_y,crossbar_x,Num_rows,Num_columns = crossbar_weights.shape
     _N_, crossbar_y, Num_rows = crossbar_inputs.shape
-    output = torch.zeros(_N_,N)
-    columns_per_crossbar = math.floor(N/crossbar_x)
+    output_fc = torch.zeros(_N_,N)
+    columns_per_crossbar = math.ceil(N/crossbar_x)
     
     tasks = []
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        for ii in range(crossbar_y):
-            for jj in range(crossbar_x):
-                column_start_idx = jj*columns_per_crossbar
-                column_end_idx = (jj+1)*columns_per_crossbar
-                tmp_x = crossbar_inputs[:,ii]
-                tmp_w = crossbar_weights[ii][jj]
+        for cy in range(crossbar_y):
+            for cx in range(crossbar_x):
+                x = crossbar_inputs[:,cy]
+                w = crossbar_weights[cy][cx]
                 if checkboard:
-                    tmp_w = checkerboard_last_cols(tmp_w,Num_Columns-columns_per_crossbar)
-                # out_matmul = torch.matmul(tmp_x,tmp_w)
-                args = (((ii,jj),tmp_x),tmp_w,Num_rows,Num_Columns,mode,transient)
+                    w = checkerboard_last_cols(w,Num_columns-columns_per_crossbar)
+                _vec_ = (cx,x)
+                args = [_vec_,w,Num_rows,Num_columns,mode,transient]
                 tasks.append(args)
         futures = [executor.submit(_task, *t) for t in tasks]
-        # for f in tqdm(as_completed(futures),total=len(tasks)):
         for f in tqdm(as_completed(futures),total=len(tasks),disable=True):
-            (ii,jj), out_matmul = f.result()
-            column_start_idx = jj*columns_per_crossbar
-            column_end_idx = (jj+1)*columns_per_crossbar
-            out_matmul = torch.from_numpy(out_matmul)
-            output[:,column_start_idx:column_end_idx] += out_matmul[:,:columns_per_crossbar]
+            cx, output = f.result()
+            column_start_idx = cx*columns_per_crossbar
+            if cx==crossbar_x-1:
+                column_end_idx=N
+            else:
+                column_end_idx = (cx+1)*columns_per_crossbar
+            output = torch.from_numpy(output)
+            output_fc[:,column_start_idx:column_end_idx] += output[:,:column_end_idx-column_start_idx]
 
-    return output
+    return output_fc
 
-def _fc_tile_(x,w, Num_rows,Num_Columns,mode,max_workers,transient,checkboard):
+
+
+def get_inputs_to_cim(x,Num_rows):
     _N_ , M = x.shape
-    M , N = w.shape
-
     crossbar_y = math.ceil(M/Num_rows)
-    crossbar_x = math.ceil(N/Num_Columns)
+    crossbar_inputs = torch.zeros((_N_,crossbar_y,Num_rows))
+    rows_per_crossbar = math.ceil(M/crossbar_y)
+
+    for cy in range(crossbar_y):
+        row_start_idx = cy*rows_per_crossbar
+        if cy==crossbar_y-1:
+            row_end_idx = M
+        else:
+            row_end_idx = (cy+1)*rows_per_crossbar
+        crossbar_inputs[:,cy,:row_end_idx-row_start_idx] = x[:,row_start_idx:row_end_idx]    
+    return crossbar_inputs
+
+def get_weights_to_cim(w,Num_rows,Num_columns):
+    M , N = w.shape
+    crossbar_y = math.ceil(M/Num_rows)
+    crossbar_x = math.ceil(N/Num_columns)
     # print("crossbar grid",crossbar_y,crossbar_x)
 
-    crossbar_inputs = torch.zeros((_N_,crossbar_y,Num_rows))
-    crossbar_weights = torch.zeros((crossbar_y,crossbar_x,Num_rows,Num_Columns))
+    crossbar_weights = torch.zeros((crossbar_y,crossbar_x,Num_rows,Num_columns))
 
     rows_per_crossbar = math.ceil(M/crossbar_y)
     columns_per_crossbar = math.ceil(N/crossbar_x)
 
     # print(rows_per_crossbar, columns_per_crossbar)
 
-    for ii in range(crossbar_y):
-        row_start_idx = ii*rows_per_crossbar
-        if ii==crossbar_y-1:
+    for cy in range(crossbar_y):
+        row_start_idx = cy*rows_per_crossbar
+        if cy==crossbar_y-1:
             row_end_idx = M
         else:
-            row_end_idx = (ii+1)*rows_per_crossbar
-        # print(ii)
-        crossbar_inputs[:,ii,:row_end_idx-row_start_idx] = x[:,row_start_idx:row_end_idx]
-    # for ii in range(0,whole_input_size,step=inpu)
-        # print(row_start_idx,row_end_idx)
+            row_end_idx = (cy+1)*rows_per_crossbar
 
-        for jj in range(crossbar_x):
-            column_start_idx = jj*columns_per_crossbar
-            if jj==crossbar_x-1:
+        for cx in range(crossbar_x):
+            column_start_idx = cx*columns_per_crossbar
+            if cx==crossbar_x-1:
                 column_end_idx=N
             else:
-                column_end_idx = (jj+1)*columns_per_crossbar
-            # print(column_start_idx,column_end_idx)
-            
-            crossbar_weights[ii,jj,:row_end_idx-row_start_idx,:column_end_idx-column_start_idx] = w[row_start_idx:row_end_idx,column_start_idx:column_end_idx]
-        
+                column_end_idx = (cx+1)*columns_per_crossbar
+            crossbar_weights[cy,cx,:row_end_idx-row_start_idx,:column_end_idx-column_start_idx] = w[row_start_idx:row_end_idx,column_start_idx:column_end_idx]    
+    return crossbar_weights
+
+def fc_to_cim(x,w, Num_rows,Num_columns,mode,max_workers,transient,checkboard):
+    M , N = w.shape
+
+    crossbar_inputs = get_inputs_to_cim(x,Num_rows)        
+    crossbar_weights = get_weights_to_cim(w,Num_rows,Num_columns)
     # print(f"crossbar weigths : {crossbar_weights.shape}")
     # print(f"crossbar inputs : {crossbar_inputs.shape}")
-    return fc_linear(crossbar_inputs,crossbar_weights,N,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)
+    return parallel_fc_kernels(crossbar_inputs,crossbar_weights,N,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)
 
-def fc_tile(x,w, Num_rows,Num_Columns,mode,max_workers,transient,checkboard,mapping):
-    # w = w.T
+def fc_one_input(x,w, Num_rows,Num_columns,mode,max_workers,transient,checkboard,mapping):
     M , N = w.shape
     _N_ , M = x.shape
     if mapping:
 
         mapped_x, mapped_w = map_fc(x,w)
-        output_fc = _fc_tile_(mapped_x,mapped_w,Num_rows,Num_Columns,mode,max_workers,transient,checkboard)
+        output_fc = fc_to_cim(mapped_x,mapped_w,Num_rows,Num_columns,mode,max_workers,transient,checkboard)
     else:
-        # pos_x, neg_x = compliment(x)
-        # pos_w, neg_w = compliment(w)
-        # pos_output_fc = _fc_tile_(pos_x,pos_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)
-        # neg_output_fc = _fc_tile_(neg_x,neg_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)
-        # output_fc = pos_output_fc + neg_output_fc
         pos_x, neg_x = compliment(x)
         pos_w, neg_w = compliment(w)
-        pos_output_fc = _fc_tile_(pos_x,pos_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)
-        neg_output_fc = _fc_tile_(neg_x,neg_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)
+        pos_output_fc = fc_to_cim(pos_x,pos_w,Num_rows,Num_columns,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)
+        neg_output_fc = fc_to_cim(neg_x,neg_w,Num_rows,Num_columns,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)
         output_fc = pos_output_fc + neg_output_fc
 
     output_fc = get_fc_output(output_fc,M)
     return output_fc
 
-def fc(x,w, Num_rows,Num_Columns,mode,max_workers,transient,checkboard,mapping):
-    # w = w.T
+def fc(x,w, Num_rows,Num_columns,mode,max_workers,transient,checkboard,mapping):
     M , N = w.shape
     _N_ , M = x.shape
     output_fc = torch.empty((_N_,N))
     for idx in range(_N_):
         tmp_x = x[idx].unsqueeze(0)
-        output_fc[idx,:] = fc_tile(tmp_x,w, Num_rows,Num_Columns,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard,mapping=mapping)
+        output_fc[idx,:] = fc_one_input(tmp_x,w, Num_rows,Num_columns,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard,mapping=mapping)
     return output_fc

@@ -70,127 +70,124 @@ def map_conv2d(x,w,padding=0):
     return mapped_x,mapped_w
 
 
-def run_tile(ii,jj,cx, tmp_x_np, tmp_w_np, Num_rows, Num_Columns, columns_per_crossbar, mode,transient,checkboard):
-    if checkboard:
-        tmp_w_np = checkerboard_last_cols(tmp_w_np, tmp_w_np.shape[1] - columns_per_crossbar)
-    
-    _, _out_np = _task(((ii,jj), tmp_x_np), tmp_w_np, Num_rows, Num_Columns, mode, transient)
-
-    column_start_idx = cx * columns_per_crossbar
-    column_end_idx = (cx + 1) * columns_per_crossbar
-    # column_end_idx = Total_dim if tmp_w_np.shape[1] - columns_per_crossbar < columns_per_crossbar else (cx + 1) * columns_per_crossbar
-    return ((ii, jj, column_start_idx, column_end_idx), _out_np[:, :columns_per_crossbar])
-
-def cim_conv_2d(crossbar_inputs, crossbar_weights, _COUT_, mode,transient,checkboard,max_workers=None):
+def parallel_conv_kernels(crossbar_inputs, crossbar_weights, _COUT_, mode,transient,checkboard,max_workers=None):
     _N_, _HOUT_, _WOUT_, crossbar_y, Num_rows = crossbar_inputs.shape
     _, crossbar_x, _, Num_Columns = crossbar_weights.shape
     output_conv_2d = torch.zeros(_N_, _COUT_, _HOUT_, _WOUT_)
 
-    columns_per_crossbar = math.floor(_COUT_ / crossbar_x)
-
-    # Preconvert weights to NumPy once (this is reused for each (ii, jj))
-    # weights_np = [[crossbar_weights[cy, cx].numpy() for cx in range(crossbar_x)] for cy in range(crossbar_y)]
+    columns_per_crossbar = math.ceil(_COUT_/crossbar_x)
 
     tasks = []
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         for ii in range(_HOUT_):
             for jj in range(_WOUT_):
-
                 for cy in range(crossbar_y):
                     for cx in range(crossbar_x):
-                        tmp_x = crossbar_inputs[:, ii, jj, cy, :].numpy()
-                        tmp_w = crossbar_weights[cy][cx]
-                        # tmp_w = weights_np[cy][cx]
-                        tasks.append((ii,jj, cx, tmp_x, tmp_w, Num_rows, Num_Columns, columns_per_crossbar, mode, transient,checkboard))
+                        x = crossbar_inputs[:, ii, jj, cy, :].numpy()
+                        w = crossbar_weights[cy][cx]
+                        if checkboard:
+                            w = checkerboard_last_cols(w, Num_Columns - columns_per_crossbar)
+                        _vec_ = ((ii,jj,cx),x)
+                        args = [_vec_, w, Num_rows, Num_Columns, mode, transient]
+                        tasks.append(args)
 
-        futures = [executor.submit(run_tile, *t) for t in tasks]
-        # for f in tqdm(as_completed(futures),total=len(tasks)):
+        futures = [executor.submit(_task, *t) for t in tasks]
         for f in tqdm(as_completed(futures),total=len(tasks),disable=True):
-            (ii,jj, col_start, col_end), out_np = f.result()
+            (ii,jj, cx), out_np = f.result()
             out = torch.from_numpy(out_np)
-            output_conv_2d[:, col_start:col_end, ii, jj] += out
+            column_start_idx = cx*columns_per_crossbar
+            if cx==crossbar_x-1:
+                column_end_idx=_COUT_
+            else:
+                column_end_idx = (cx+1)*columns_per_crossbar
+            output_conv_2d[:, column_start_idx:column_end_idx, ii, jj] += out[:,:column_end_idx-column_start_idx]
 
     return output_conv_2d
 
-def _conv2d_tile_(x,w,Num_rows,Num_Columns,mode,max_workers,checkboard,transient):
+
+def get_inputs_to_cim(x,Num_rows):
     _N_,_HOUT_, _WOUT_,_CIN_, _kernel_size_ = x.shape
-    _COUT_, _CIN_, _kernel_size_ = w.shape
-    output_conv_2d = torch.zeros(_N_,_COUT_,_HOUT_,_WOUT_)
 
     whole_input_size = _CIN_*_kernel_size_
     # print(f"total inputs: {whole_input_size}")
     crossbar_y = math.ceil((_CIN_*_kernel_size_)/Num_rows)
-    crossbar_x = math.ceil(_COUT_/Num_Columns)
 
-    crossbar_weights = torch.zeros((crossbar_y,crossbar_x,Num_rows,Num_Columns))
     crossbar_inputs = torch.zeros((_N_,_HOUT_,_WOUT_,crossbar_y,Num_rows))
 
-    rows_per_crossbar = math.floor(whole_input_size/crossbar_y)
+    rows_per_crossbar = math.ceil(whole_input_size/crossbar_y)
 
-    flatten_x = x.reshape(*x.shape[:-2],-1)
-    # print(flatten_x.shape)
-    flatten_w = w.reshape(*w.shape[:-2],-1).T
-    # print(flatten_w.shape)
-    # print(crossbar_inputs.shape)
-    # print(f"weights shape: {crossbar_weights.shape}")
-    # print(f"inputs shape: {crossbar_inputs.shape}")
+    flatten_x = x.reshape(_N_,_HOUT_,_WOUT_,whole_input_size)
 
-    columns_per_crossbar = math.floor(_COUT_/crossbar_x)
+    for cy in range(crossbar_y):
+        row_start_idx = cy*rows_per_crossbar
+        if cy==crossbar_y-1:
+            row_end_idx = whole_input_size
+        else:
+            row_end_idx = (cy+1)*rows_per_crossbar
+        crossbar_inputs[:,:,:,cy,:row_end_idx-row_start_idx] = flatten_x[:,:,:,row_start_idx:row_end_idx]
+    return crossbar_inputs
 
-    for ii in range(crossbar_y):
-        row_start_idx = ii*rows_per_crossbar
-        # if ii==crossbar_y-1:
-        #     row_end_idx = flatten_x.shape[-1]
-        # else:
-        row_end_idx = (ii+1)*rows_per_crossbar
-        # print(start_idx,end_idx)
-        crossbar_inputs[:,:,:,ii,:rows_per_crossbar] = flatten_x[:,:,:,row_start_idx:row_end_idx]
-    # for ii in range(0,whole_input_size,step=inpu)
+def get_weights_to_cim(w,Num_rows,Num_columns):
+    _COUT_, _CIN_, _kernel_size_ = w.shape
 
-        for jj in range(crossbar_x):
-            column_start_idx = jj*columns_per_crossbar
-            # if jj==crossbar_x-1:
-            #     column_end_idx=flatten_w.shape[-1]
-            # else:
-            column_end_idx = (jj+1)*columns_per_crossbar
+    whole_input_size = _CIN_*_kernel_size_
+    # print(f"total inputs: {whole_input_size}")
+    crossbar_y = math.ceil((_CIN_*_kernel_size_)/Num_rows)
+    crossbar_x = math.ceil(_COUT_/Num_columns)
+
+    crossbar_weights = torch.zeros((crossbar_y,crossbar_x,Num_rows,Num_columns))
+    rows_per_crossbar = math.ceil(whole_input_size/crossbar_y)
+    flatten_w = w.reshape(_COUT_,whole_input_size).T
+
+    columns_per_crossbar = math.ceil(_COUT_/crossbar_x)
+
+    for cy in range(crossbar_y):
+        row_start_idx = cy*rows_per_crossbar
+        if cy==crossbar_y-1:
+            row_end_idx = whole_input_size
+        else:
+            row_end_idx = (cy+1)*rows_per_crossbar
+
+        for cx in range(crossbar_x):
+            column_start_idx = cx*columns_per_crossbar
+            if cx==crossbar_x-1:
+                column_end_idx=_COUT_
+            else:
+                column_end_idx = (cx+1)*columns_per_crossbar
             
-            crossbar_weights[ii,jj,:rows_per_crossbar,:columns_per_crossbar] = flatten_w[row_start_idx:row_end_idx,column_start_idx:column_end_idx]
+            crossbar_weights[cy,cx,:row_end_idx-row_start_idx,:column_end_idx-column_start_idx] = flatten_w[row_start_idx:row_end_idx,column_start_idx:column_end_idx]
+    return crossbar_weights
 
 
-    output_conv_2d = cim_conv_2d(crossbar_inputs,crossbar_weights,_COUT_,mode,transient=transient,max_workers=max_workers,checkboard=checkboard)
+def conv2d_to_cim(x,w,Num_rows,Num_columns,mode,max_workers,checkboard,transient):
+    _COUT_, _CIN_, _kernel_size_ = w.shape
+
+    crossbar_inputs = get_inputs_to_cim(x,Num_rows)
+    crossbar_weights = get_weights_to_cim(w,Num_rows,Num_columns)
+    output_conv_2d = parallel_conv_kernels(crossbar_inputs,crossbar_weights,_COUT_,mode,transient=transient,max_workers=max_workers,checkboard=checkboard)
     return output_conv_2d
 
-
-# def conv2d_tile_mapping(x,w,Num_rows,Num_Columns,mode,max_workers,transient=False):
-#     _N_, _CIN_, _Hi_, _Wi_ = x.shape
-#     _COUT_, _CIN_, _Kh_, _Kw_ = w.shape
-#     mapped_x, mapped_w = map_conv2d(x,w)
-#     output_conv_2d = _conv2d_tile_(mapped_x,mapped_w,Num_rows,Num_Columns,mode,max_workers,transient)
-#     output_conv_2d = get_conv2d_output(output_conv_2d,_Kh_,_Kw_,_CIN_)
-    
-#     return output_conv_2d
-
-def conv2d_tile(x,w,Num_rows,Num_Columns,mode,max_workers,transient,checkboard,mapping):
+def conv2d_one_input(x,w,Num_rows,Num_Columns,mode,max_workers,transient,checkboard,mapping):
     _N_, _CIN_, _Hi_, _Wi_ = x.shape
     _COUT_, _CIN_, _Kh_, _Kw_ = w.shape
     if mapping:
         mapped_x, mapped_w = map_conv2d(x,w)
-        output_conv_2d = _conv2d_tile_(mapped_x,mapped_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,checkboard=checkboard,transient=transient)
+        output_conv_2d = conv2d_to_cim(mapped_x,mapped_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,checkboard=checkboard,transient=transient)
         output_conv_2d = get_conv2d_output(output_conv_2d,_Kh_,_Kw_,_CIN_)
     else:    
         pos_x, neg_x = compliment(x)
         pos_w, neg_w = compliment(w)
         pos_x, pos_w = map_conv2d(pos_x,pos_w)
         neg_x, neg_w = map_conv2d(neg_x,neg_w)
-        pos_output_conv_2d = _conv2d_tile_(pos_x,pos_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,checkboard=checkboard,transient=transient)
-        neg_output_conv_2d = _conv2d_tile_(neg_x,neg_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,checkboard=checkboard,transient=transient)
+        pos_output_conv_2d = conv2d_to_cim(pos_x,pos_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,checkboard=checkboard,transient=transient)
+        neg_output_conv_2d = conv2d_to_cim(neg_x,neg_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,checkboard=checkboard,transient=transient)
         output_conv_2d = pos_output_conv_2d+neg_output_conv_2d
         output_conv_2d = get_conv2d_output(output_conv_2d,_Kh_,_Kw_,_CIN_)
     
     return output_conv_2d
 
 
-def con2d(x,w,Num_rows,Num_Columns,mode,max_workers,transient,checkboard,mapping):
+def conv2d(x,w,Num_rows,Num_Columns,mode,max_workers,transient,checkboard,mapping):
     padding = 0
     _N_, _CIN_, _Hi_, _Wi_ = x.shape
     _COUT_, _CIN_, _Kh_, _Kw_ = w.shape
@@ -199,6 +196,6 @@ def con2d(x,w,Num_rows,Num_Columns,mode,max_workers,transient,checkboard,mapping
     output_conv_2d = torch.zeros(_N_,_COUT_,_HOUT_,_WOUT_)
     for idx in range(_N_):
         tmp_x = x[idx].unsqueeze(0)
-        output_conv_2d[idx,:,:,:] = conv2d_tile(tmp_x,w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard,mapping=mapping)
+        output_conv_2d[idx,:,:,:] = conv2d_one_input(tmp_x,w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard,mapping=mapping)
     return output_conv_2d
 

@@ -6,7 +6,7 @@ import torch
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import math
 
-from models.cim_conv2d_mapping import compliment, checkerboard_last_cols
+from models.cim_conv import compliment, checkerboard_last_cols
 import time
 def get_fc_output(I, M):
     out = 2*I - M
@@ -35,7 +35,7 @@ def map_fc(x,w):
 
     return mapped_x,mapped_w
 
-def  fc_linear(crossbar_inputs,crossbar_weights,N,mode,max_workers,transient):
+def  fc_linear(crossbar_inputs,crossbar_weights,N,mode,max_workers,transient,checkboard):
     crossbar_y,crossbar_x,Num_rows,Num_Columns = crossbar_weights.shape
     _N_, crossbar_y, Num_rows = crossbar_inputs.shape
     output = torch.zeros(_N_,N)
@@ -50,7 +50,8 @@ def  fc_linear(crossbar_inputs,crossbar_weights,N,mode,max_workers,transient):
                 column_end_idx = (jj+1)*columns_per_crossbar
                 tmp_x = crossbar_inputs[:,ii]
                 tmp_w = crossbar_weights[ii][jj]
-                tmp_w = checkerboard_last_cols(tmp_w,Num_Columns-columns_per_crossbar)
+                if checkboard:
+                    tmp_w = checkerboard_last_cols(tmp_w,Num_Columns-columns_per_crossbar)
                 # out_matmul = torch.matmul(tmp_x,tmp_w)
                 args = (((ii,jj),tmp_x),tmp_w,Num_rows,Num_Columns,mode,transient)
                 tasks.append(args)
@@ -65,7 +66,7 @@ def  fc_linear(crossbar_inputs,crossbar_weights,N,mode,max_workers,transient):
 
     return output
 
-def _fc_tile_(x,w, Num_rows,Num_Columns,mode,max_workers,transient):
+def _fc_tile_(x,w, Num_rows,Num_Columns,mode,max_workers,transient,checkboard):
     _N_ , M = x.shape
     M , N = w.shape
 
@@ -103,23 +104,31 @@ def _fc_tile_(x,w, Num_rows,Num_Columns,mode,max_workers,transient):
         
     # print(f"crossbar weigths : {crossbar_weights.shape}")
     # print(f"crossbar inputs : {crossbar_inputs.shape}")
-    return fc_linear(crossbar_inputs,crossbar_weights,N,mode,max_workers,transient)
+    return fc_linear(crossbar_inputs,crossbar_weights,N,mode,max_workers,transient,checkboard)
 
-def fc_tile(x,w, Num_rows,Num_Columns,mode,max_workers,transient):
+def fc_tile(x,w, Num_rows,Num_Columns,mode,max_workers,transient,checkboard,mapping):
     # w = w.T
     M , N = w.shape
     _N_ , M = x.shape
-    mapped_x, mapped_w = map_fc(x,w)
-    output_fc = _fc_tile_(mapped_x,mapped_w,Num_rows,Num_Columns,mode,max_workers,transient)
+    if mapping:
+
+        mapped_x, mapped_w = map_fc(x,w)
+        output_fc = _fc_tile_(mapped_x,mapped_w,Num_rows,Num_Columns,mode,max_workers,transient,checkboard)
+    else:
+        pos_x, neg_x = compliment(x)
+        pos_w, neg_w = compliment(w)
+        pos_output_fc = _fc_tile_(pos_x,pos_w,Num_rows,Num_Columns,mode,max_workers,transient,checkboard)
+        neg_output_fc = _fc_tile_(neg_x,neg_w,Num_rows,Num_Columns,mode,max_workers,transient,checkboard)
+        output_fc = pos_output_fc + neg_output_fc
     output_fc = get_fc_output(output_fc,M)
     return output_fc
 
-def fc(x,w, Num_rows,Num_Columns,mode,max_workers,transient):
+def fc(x,w, Num_rows,Num_Columns,mode,max_workers,transient,checkboard,mapping):
     # w = w.T
     M , N = w.shape
     _N_ , M = x.shape
     output_fc = torch.empty((_N_,N))
     for idx in range(_N_):
         tmp_x = x[idx].unsqueeze(0)
-        output_fc[idx,:] = fc_tile(tmp_x,w, Num_rows,Num_Columns,mode,max_workers,transient)
+        output_fc[idx,:] = fc_tile(tmp_x,w, Num_rows,Num_Columns,mode,max_workers,transient,checkboard,mapping)
     return output_fc

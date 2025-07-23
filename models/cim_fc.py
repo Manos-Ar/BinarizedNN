@@ -119,7 +119,7 @@ def fc_to_cim(x,w, Num_rows,Num_columns,mode,max_workers,transient,checkboard):
     crossbar_weights = get_weights_to_cim(w,Num_rows,Num_columns,checkboard)
     # print(f"crossbar weigths : {crossbar_weights.shape}")
     # print(f"crossbar inputs : {crossbar_inputs.shape}")
-    return parallel_fc_kernels(crossbar_inputs,crossbar_weights,N,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)
+    return parallel_fc_kernels(crossbar_inputs,crossbar_weights,N,mode=mode,max_workers=max_workers,transient=transient)
 
 def fc_one_input(x,w, Num_rows,Num_columns,mode,max_workers,transient,checkboard,mapping):
     M , N = w.shape

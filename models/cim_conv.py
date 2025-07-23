@@ -35,6 +35,32 @@ def get_conv2d_output(I,Kh, Kw, CIN):
     out = 2*I - Kh*Kw*CIN
     return out
 
+def map_conv2d_regular_mapping_one(x,w,padding=0):
+    _N_, _CIN_, _Hi_, _Wi_ = x.shape
+    _COUT_, _CIN_, _Kh_, _Kw_ = w.shape
+
+    mapped_w = w.reshape(_COUT_,_CIN_,-1)
+    kernel_size = _Kh_*_Kw_   
+    _Hout_ = _Hi_ + 2*padding - _Kh_ + 1
+    _Wout_ = _Wi_ + 2*padding - _Kw_ + 1
+    
+    mapped_x = torch.empty((_N_,_Hout_,_Wout_,_CIN_,kernel_size))
+    
+    for ii in range(_Hout_):
+        for jj in range(_Wout_):
+            _x_ = x[:,:,ii:ii+_Kh_,jj:jj+_Kw_]
+            mapped_x[:,ii,jj,:,:] = _x_.reshape(_N_,_CIN_,-1)
+
+    return mapped_x,mapped_w
+
+def map_conv2d_regular_mapping(x,w,padding=0):
+    pos_x, neg_x = compliment(x)
+    pos_w, neg_w = compliment(w)
+    pos_x, pos_w = map_conv2d_regular_mapping_one(pos_x,pos_w,padding)
+    neg_x, neg_w = map_conv2d_regular_mapping_one(neg_x,neg_w,padding)
+
+    return ((pos_x,pos_w),(neg_x,neg_w))
+
 def map_conv2d(x,w,padding=0):
     _COUT_, _CIN_, _Kh_, _Kw_ = w.shape
     _N_, _CIN_, _Hi_, _Wi_ = x.shape
@@ -70,7 +96,7 @@ def map_conv2d(x,w,padding=0):
     return mapped_x,mapped_w
 
 
-def parallel_conv_kernels(crossbar_inputs, crossbar_weights, _COUT_, mode,transient,checkboard,max_workers=None):
+def parallel_conv_kernels(crossbar_inputs, crossbar_weights, _COUT_, mode,transient,max_workers=None):
     _N_, _HOUT_, _WOUT_, crossbar_y, Num_rows = crossbar_inputs.shape
     _, crossbar_x, _, Num_Columns = crossbar_weights.shape
     output_conv_2d = torch.zeros(_N_, _COUT_, _HOUT_, _WOUT_)
@@ -85,8 +111,6 @@ def parallel_conv_kernels(crossbar_inputs, crossbar_weights, _COUT_, mode,transi
                     for cx in range(crossbar_x):
                         x = crossbar_inputs[:, ii, jj, cy, :].numpy()
                         w = crossbar_weights[cy][cx]
-                        if checkboard:
-                            w = checkerboard_last_cols(w, Num_Columns - columns_per_crossbar)
                         _vec_ = ((ii,jj,cx),x)
                         args = [_vec_, w, Num_rows, Num_Columns, mode, transient]
                         tasks.append(args)
@@ -127,7 +151,7 @@ def get_inputs_to_cim(x,Num_rows):
         crossbar_inputs[:,:,:,cy,:row_end_idx-row_start_idx] = flatten_x[:,:,:,row_start_idx:row_end_idx]
     return crossbar_inputs
 
-def get_weights_to_cim(w,Num_rows,Num_columns):
+def get_weights_to_cim(w,Num_rows,Num_columns,checkboard=False):
     _COUT_, _CIN_, _kernel_size_ = w.shape
 
     whole_input_size = _CIN_*_kernel_size_
@@ -156,6 +180,8 @@ def get_weights_to_cim(w,Num_rows,Num_columns):
                 column_end_idx = (cx+1)*columns_per_crossbar
             
             crossbar_weights[cy,cx,:row_end_idx-row_start_idx,:column_end_idx-column_start_idx] = flatten_w[row_start_idx:row_end_idx,column_start_idx:column_end_idx]
+            if checkboard:
+                crossbar_weights[cy,cx] = checkerboard_last_cols(crossbar_weights[cy,cx], Num_columns - columns_per_crossbar)
     return crossbar_weights
 
 
@@ -163,8 +189,8 @@ def conv2d_to_cim(x,w,Num_rows,Num_columns,mode,max_workers,checkboard,transient
     _COUT_, _CIN_, _kernel_size_ = w.shape
 
     crossbar_inputs = get_inputs_to_cim(x,Num_rows)
-    crossbar_weights = get_weights_to_cim(w,Num_rows,Num_columns)
-    output_conv_2d = parallel_conv_kernels(crossbar_inputs,crossbar_weights,_COUT_,mode,transient=transient,max_workers=max_workers,checkboard=checkboard)
+    crossbar_weights = get_weights_to_cim(w,Num_rows,Num_columns,checkboard)
+    output_conv_2d = parallel_conv_kernels(crossbar_inputs,crossbar_weights,_COUT_,mode,transient=transient,max_workers=max_workers)
     return output_conv_2d
 
 def conv2d_one_input(x,w,Num_rows,Num_Columns,mode,max_workers,transient,checkboard,mapping):
@@ -175,10 +201,7 @@ def conv2d_one_input(x,w,Num_rows,Num_Columns,mode,max_workers,transient,checkbo
         output_conv_2d = conv2d_to_cim(mapped_x,mapped_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,checkboard=checkboard,transient=transient)
         output_conv_2d = get_conv2d_output(output_conv_2d,_Kh_,_Kw_,_CIN_)
     else:    
-        pos_x, neg_x = compliment(x)
-        pos_w, neg_w = compliment(w)
-        pos_x, pos_w = map_conv2d(pos_x,pos_w)
-        neg_x, neg_w = map_conv2d(neg_x,neg_w)
+        (pos_x,pos_w), (neg_x,neg_w) = map_conv2d_regular_mapping(x,w,padding=0)
         pos_output_conv_2d = conv2d_to_cim(pos_x,pos_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,checkboard=checkboard,transient=transient)
         neg_output_conv_2d = conv2d_to_cim(neg_x,neg_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,checkboard=checkboard,transient=transient)
         output_conv_2d = pos_output_conv_2d+neg_output_conv_2d

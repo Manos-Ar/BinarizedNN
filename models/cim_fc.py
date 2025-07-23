@@ -35,7 +35,7 @@ def map_fc(x,w):
 
     return mapped_x,mapped_w
 
-def parallel_fc_kernels(crossbar_inputs,crossbar_weights,N,mode,max_workers,transient,checkboard):
+def parallel_fc_kernels(crossbar_inputs,crossbar_weights,N,mode,max_workers,transient):
     crossbar_y,crossbar_x,Num_rows,Num_columns = crossbar_weights.shape
     _N_, crossbar_y, Num_rows = crossbar_inputs.shape
     output_fc = torch.zeros(_N_,N)
@@ -48,8 +48,6 @@ def parallel_fc_kernels(crossbar_inputs,crossbar_weights,N,mode,max_workers,tran
             for cx in range(crossbar_x):
                 x = crossbar_inputs[:,cy]
                 w = crossbar_weights[cy][cx]
-                if checkboard:
-                    w = checkerboard_last_cols(w,Num_columns-columns_per_crossbar)
                 _vec_ = (cx,x)
                 args = [_vec_,w,Num_rows,Num_columns,mode,transient]
                 tasks.append(args)
@@ -83,7 +81,7 @@ def get_inputs_to_cim(x,Num_rows):
         crossbar_inputs[:,cy,:row_end_idx-row_start_idx] = x[:,row_start_idx:row_end_idx]    
     return crossbar_inputs
 
-def get_weights_to_cim(w,Num_rows,Num_columns):
+def get_weights_to_cim(w,Num_rows,Num_columns,checkboard):
     M , N = w.shape
     crossbar_y = math.ceil(M/Num_rows)
     crossbar_x = math.ceil(N/Num_columns)
@@ -110,13 +108,15 @@ def get_weights_to_cim(w,Num_rows,Num_columns):
             else:
                 column_end_idx = (cx+1)*columns_per_crossbar
             crossbar_weights[cy,cx,:row_end_idx-row_start_idx,:column_end_idx-column_start_idx] = w[row_start_idx:row_end_idx,column_start_idx:column_end_idx]    
+            if checkboard:
+                crossbar_weights[cy,cx] = checkerboard_last_cols(crossbar_weights[cy,cx], Num_columns - columns_per_crossbar)
     return crossbar_weights
 
 def fc_to_cim(x,w, Num_rows,Num_columns,mode,max_workers,transient,checkboard):
     M , N = w.shape
 
     crossbar_inputs = get_inputs_to_cim(x,Num_rows)        
-    crossbar_weights = get_weights_to_cim(w,Num_rows,Num_columns)
+    crossbar_weights = get_weights_to_cim(w,Num_rows,Num_columns,checkboard)
     # print(f"crossbar weigths : {crossbar_weights.shape}")
     # print(f"crossbar inputs : {crossbar_inputs.shape}")
     return parallel_fc_kernels(crossbar_inputs,crossbar_weights,N,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)

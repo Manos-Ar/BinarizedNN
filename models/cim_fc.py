@@ -35,7 +35,7 @@ def map_fc(x,w):
 
     return mapped_x,mapped_w
 
-def parallel_fc_kernels(crossbar_inputs,crossbar_weights,N,mode,max_workers,transient):
+def parallel_fc_kernels(crossbar_inputs,crossbar_weights,N,adc_steps_path,mode,max_workers,transient):
     crossbar_y,crossbar_x,Num_rows,Num_columns = crossbar_weights.shape
     _N_, crossbar_y, Num_rows = crossbar_inputs.shape
     output_fc = torch.zeros(_N_,N)
@@ -49,7 +49,7 @@ def parallel_fc_kernels(crossbar_inputs,crossbar_weights,N,mode,max_workers,tran
                 x = crossbar_inputs[:,cy]
                 w = crossbar_weights[cy][cx]
                 _vec_ = (cx,x)
-                args = [_vec_,w,Num_rows,Num_columns,mode,transient]
+                args = [_vec_,w,Num_rows,Num_columns,adc_steps_path,mode,transient]
                 tasks.append(args)
         futures = [executor.submit(_task, *t) for t in tasks]
         for f in tqdm(as_completed(futures),total=len(tasks),disable=True):
@@ -112,37 +112,41 @@ def get_weights_to_cim(w,Num_rows,Num_columns,checkboard):
                 crossbar_weights[cy,cx] = checkerboard_last_cols(crossbar_weights[cy,cx], Num_columns - columns_per_crossbar)
     return crossbar_weights
 
-def fc_to_cim(x,w, Num_rows,Num_columns,mode,max_workers,transient,checkboard):
+def fc_to_cim(x,w, Num_rows,Num_columns,adc_steps_path,mode,max_workers,transient,checkboard):
     M , N = w.shape
 
     crossbar_inputs = get_inputs_to_cim(x,Num_rows)        
     crossbar_weights = get_weights_to_cim(w,Num_rows,Num_columns,checkboard)
     # print(f"crossbar weigths : {crossbar_weights.shape}")
     # print(f"crossbar inputs : {crossbar_inputs.shape}")
-    return parallel_fc_kernels(crossbar_inputs,crossbar_weights,N,mode=mode,max_workers=max_workers,transient=transient)
+    return parallel_fc_kernels(crossbar_inputs,crossbar_weights,N,adc_steps_path=adc_steps_path,mode=mode,max_workers=max_workers,transient=transient)
 
-def fc_one_input(x,w, Num_rows,Num_columns,mode,max_workers,transient,checkboard,mapping):
+def fc_one_input(x,w, Num_rows,Num_columns,adc_steps_path,mode,max_workers,transient,checkboard,mapping):
     M , N = w.shape
     _N_ , M = x.shape
     if mapping:
 
         mapped_x, mapped_w = map_fc(x,w)
-        output_fc = fc_to_cim(mapped_x,mapped_w,Num_rows,Num_columns,mode,max_workers,transient,checkboard)
+        output_fc = fc_to_cim(mapped_x,mapped_w,Num_rows,Num_columns,adc_steps_path=adc_steps_path,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)
     else:
         pos_x, neg_x = compliment(x)
         pos_w, neg_w = compliment(w)
-        pos_output_fc = fc_to_cim(pos_x,pos_w,Num_rows,Num_columns,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)
-        neg_output_fc = fc_to_cim(neg_x,neg_w,Num_rows,Num_columns,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)
+        pos_output_fc = fc_to_cim(pos_x,pos_w,Num_rows,Num_columns,adc_steps_path=adc_steps_path,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)
+        neg_output_fc = fc_to_cim(neg_x,neg_w,Num_rows,Num_columns,adc_steps_path=adc_steps_path,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard)
         output_fc = pos_output_fc + neg_output_fc
 
     output_fc = get_fc_output(output_fc,M)
     return output_fc
 
-def fc(x,w, Num_rows,Num_columns,mode,max_workers,transient,checkboard,mapping):
+def fc(x,w, Num_rows,Num_columns,adc_steps_path,mode,max_workers,transient,checkboard,mapping):
     M , N = w.shape
     _N_ , M = x.shape
     output_fc = torch.empty((_N_,N))
+    if mode!="ideal":
+        _mode_ = f"mapping_{mapping}-{mode}"
+    else: 
+        _mode_ = mode
     for idx in range(_N_):
         tmp_x = x[idx].unsqueeze(0)
-        output_fc[idx,:] = fc_one_input(tmp_x,w, Num_rows,Num_columns,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard,mapping=mapping)
+        output_fc[idx,:] = fc_one_input(tmp_x,w, Num_rows,Num_columns,adc_steps_path=adc_steps_path,mode=_mode_,max_workers=max_workers,transient=transient,checkboard=checkboard,mapping=mapping)
     return output_fc

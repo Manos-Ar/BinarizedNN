@@ -13,12 +13,12 @@ from models.mlp import MLP, MLP_CIM
 from models.lenet_5 import BinarizedLeNet5_BN as Lenet_5
 from models.lenet_5 import BinarizedLeNet5_BN_CIM as Lenet_5_CIM
 
-def test(model, data_loader):
+def test(model, data_loader,disable=False):
     model.eval()
     results = []
 
     with torch.no_grad():
-        for data, target in tqdm(data_loader):
+        for data, target in tqdm(data_loader,disable=disable):
             # if cuda:
             #     data, target = data.cuda(), target.cuda()
 
@@ -54,7 +54,7 @@ if __name__ == "__main__":
         model = Lenet_5()
 
     test_batch_size = 10
-    num_batches = 1
+    num_batches = 100
     
     num_samples = num_batches * test_batch_size
 
@@ -81,7 +81,7 @@ if __name__ == "__main__":
 
 
     model.load_state_dict(torch.load(model_path))
-    original_output = test(model,subset_loader)
+    original_output = test(model,subset_loader,disable=True)
     original_prediction = torch.argmax(original_output, dim=2)
     
     original_prediction_path = os.path.join(save_path,"original_prediction.pt")
@@ -90,17 +90,18 @@ if __name__ == "__main__":
     torch.save(original_output,original_last_layer_path)
     torch.save(original_prediction,original_prediction_path)
 
-    modes = ["ideal"]
+    # modes = ["ideal"]
     # mappings = [False]
     mappings = [True,False]
 
-    # modes = ["cs", "gs"]
+    modes = ["cs", "gs"]
     # modes = ["no-comp"]
 
 
-    workers = 20
+    workers = 22
     predictions = defaultdict(lambda: defaultdict())
 
+    adc_steps_path = os.path.abspath("/shares/bulk/earapidis/dev/BinarizedNN/saved_models/lenet_5/model_1/adc_steps.pkl")
 
     for mapping in reversed(mappings):
         for mode in modes:
@@ -108,7 +109,7 @@ if __name__ == "__main__":
             if model_type=="mlp":
                 model_cim = MLP_CIM(Num_rows=32, Num_Columns=32, mode=mode,workers=workers,transient=False,checkboard=mapping,mapping=mapping)
             elif model_type=="lenet":
-                model_cim = Lenet_5_CIM(Num_rows=32, Num_Columns=32, mode=mode,workers=workers,transient=False,checkboard=mapping,mapping=mapping)
+                model_cim = Lenet_5_CIM(Num_rows=32, Num_Columns=32,adc_steps_path=adc_steps_path, mode=mode,workers=workers,transient=False,checkboard=mapping,mapping=mapping)
 
 
             model_cim.load_state_dict(model.state_dict())

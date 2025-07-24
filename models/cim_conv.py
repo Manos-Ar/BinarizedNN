@@ -96,7 +96,7 @@ def map_conv2d(x,w,padding=0):
     return mapped_x,mapped_w
 
 
-def parallel_conv_kernels(crossbar_inputs, crossbar_weights, _COUT_, mode,transient,max_workers=None):
+def parallel_conv_kernels(crossbar_inputs, crossbar_weights, _COUT_,adc_steps_path, mode,transient,max_workers=None):
     _N_, _HOUT_, _WOUT_, crossbar_y, Num_rows = crossbar_inputs.shape
     _, crossbar_x, _, Num_Columns = crossbar_weights.shape
     output_conv_2d = torch.zeros(_N_, _COUT_, _HOUT_, _WOUT_)
@@ -112,7 +112,7 @@ def parallel_conv_kernels(crossbar_inputs, crossbar_weights, _COUT_, mode,transi
                         x = crossbar_inputs[:, ii, jj, cy, :].numpy()
                         w = crossbar_weights[cy][cx]
                         _vec_ = ((ii,jj,cx),x)
-                        args = [_vec_, w, Num_rows, Num_Columns, mode, transient]
+                        args = [_vec_, w, Num_rows, Num_Columns, adc_steps_path, mode, transient]
                         tasks.append(args)
 
         futures = [executor.submit(_task, *t) for t in tasks]
@@ -185,40 +185,44 @@ def get_weights_to_cim(w,Num_rows,Num_columns,checkboard=False):
     return crossbar_weights
 
 
-def conv2d_to_cim(x,w,Num_rows,Num_columns,mode,max_workers,checkboard,transient):
+def conv2d_to_cim(x,w,Num_rows,Num_columns,adc_steps_path,mode,max_workers,checkboard,transient):
     _COUT_, _CIN_, _kernel_size_ = w.shape
 
     crossbar_inputs = get_inputs_to_cim(x,Num_rows)
     crossbar_weights = get_weights_to_cim(w,Num_rows,Num_columns,checkboard)
-    output_conv_2d = parallel_conv_kernels(crossbar_inputs,crossbar_weights,_COUT_,mode,transient=transient,max_workers=max_workers)
+    output_conv_2d = parallel_conv_kernels(crossbar_inputs,crossbar_weights,_COUT_,adc_steps_path,mode,transient=transient,max_workers=max_workers)
     return output_conv_2d
 
-def conv2d_one_input(x,w,Num_rows,Num_Columns,mode,max_workers,transient,checkboard,mapping):
+def conv2d_one_input(x,w,Num_rows,Num_Columns,adc_steps_path,mode,max_workers,transient,checkboard,mapping):
     _N_, _CIN_, _Hi_, _Wi_ = x.shape
     _COUT_, _CIN_, _Kh_, _Kw_ = w.shape
     if mapping:
         mapped_x, mapped_w = map_conv2d(x,w)
-        output_conv_2d = conv2d_to_cim(mapped_x,mapped_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,checkboard=checkboard,transient=transient)
+        output_conv_2d = conv2d_to_cim(mapped_x,mapped_w,Num_rows,Num_Columns,adc_steps_path=adc_steps_path,mode=mode,max_workers=max_workers,checkboard=checkboard,transient=transient)
         output_conv_2d = get_conv2d_output(output_conv_2d,_Kh_,_Kw_,_CIN_)
     else:    
         (pos_x,pos_w), (neg_x,neg_w) = map_conv2d_regular_mapping(x,w,padding=0)
-        pos_output_conv_2d = conv2d_to_cim(pos_x,pos_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,checkboard=checkboard,transient=transient)
-        neg_output_conv_2d = conv2d_to_cim(neg_x,neg_w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,checkboard=checkboard,transient=transient)
+        pos_output_conv_2d = conv2d_to_cim(pos_x,pos_w,Num_rows,Num_Columns,adc_steps_path=adc_steps_path,mode=mode,max_workers=max_workers,checkboard=checkboard,transient=transient)
+        neg_output_conv_2d = conv2d_to_cim(neg_x,neg_w,Num_rows,Num_Columns,adc_steps_path=adc_steps_path,mode=mode,max_workers=max_workers,checkboard=checkboard,transient=transient)
         output_conv_2d = pos_output_conv_2d+neg_output_conv_2d
         output_conv_2d = get_conv2d_output(output_conv_2d,_Kh_,_Kw_,_CIN_)
     
     return output_conv_2d
 
 
-def conv2d(x,w,Num_rows,Num_Columns,mode,max_workers,transient,checkboard,mapping):
+def conv2d(x,w,Num_rows,Num_Columns,adc_steps_path,mode,max_workers,transient,checkboard,mapping):
     padding = 0
     _N_, _CIN_, _Hi_, _Wi_ = x.shape
     _COUT_, _CIN_, _Kh_, _Kw_ = w.shape
     _HOUT_ = _Hi_ + 2*padding - _Kh_ + 1
     _WOUT_ = _Wi_ + 2*padding - _Kw_ + 1
     output_conv_2d = torch.zeros(_N_,_COUT_,_HOUT_,_WOUT_)
+    if mode!="ideal":
+        _mode_ = f"mapping_{mapping}-{mode}"
+    else: 
+        _mode_ = mode
     for idx in range(_N_):
         tmp_x = x[idx].unsqueeze(0)
-        output_conv_2d[idx,:,:,:] = conv2d_one_input(tmp_x,w,Num_rows,Num_Columns,mode=mode,max_workers=max_workers,transient=transient,checkboard=checkboard,mapping=mapping)
+        output_conv_2d[idx,:,:,:] = conv2d_one_input(tmp_x,w,Num_rows,Num_Columns,adc_steps_path=adc_steps_path,mode=_mode_,max_workers=max_workers,transient=transient,checkboard=checkboard,mapping=mapping)
     return output_conv_2d
 
